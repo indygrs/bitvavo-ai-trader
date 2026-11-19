@@ -1,0 +1,218 @@
+
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitvavo AI Trader</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1020;color:#f1f5f9;font-family:Arial,sans-serif;padding:20px}
+header{text-align:center;padding:18px 0}
+h1{color:#38bdf8;font-size:25px;margin:5px}
+.sub{color:#94a3b8;font-size:13px}
+.card{background:#151e32;border:1px solid #273650;border-radius:15px;padding:17px;margin:14px 0}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.price{font-size:25px;font-weight:bold;margin:12px 0}
+.muted{color:#94a3b8;font-size:12px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:15px}
+.stat{background:#0d1729;border-radius:10px;padding:12px}
+.value{font-size:18px;font-weight:bold;margin-top:7px}
+.signal{font-weight:bold;padding:8px 13px;border-radius:8px;background:#334155}
+.BUY{color:#4ade80;background:#123c2d}
+.SELL{color:#fb7185;background:#491e2b}
+.WAIT{color:#fbbf24;background:#453719}
+button{width:100%;padding:15px;border:0;border-radius:10px;background:#0284c7;color:white;font-size:16px;font-weight:bold;margin-top:10px}
+#status{color:#94a3b8;font-size:12px;text-align:center;margin:15px}
+footer{text-align:center;color:#64748b;font-size:11px;margin:25px 0}
+</style>
+</head>
+<body>
+
+<header>
+<h1>BITVAVO AI TRADER</h1>
+<div class="sub">Crypto analysis dashboard · Version 1.0</div>
+</header>
+
+<div class="card">
+<div class="row">
+<strong>Virtueel startkapitaal</strong>
+<span style="color:#4ade80">DEMO</span>
+</div>
+<div class="price">€100.00</div>
+<div class="muted">Geen echt geld · Geen echte transacties</div>
+</div>
+
+<div id="coins">
+<div class="card">Bitcoin wordt geladen...</div>
+<div class="card">Ethereum wordt geladen...</div>
+</div>
+
+<button onclick="loadAll()">Vernieuw marktgegevens</button>
+<div id="status">Verbinden met Bitvavo...</div>
+
+<footer>
+BITVAVO AI TRADER · Alleen informatieve analyse<br>
+Geen financieel advies
+</footer>
+
+<script>
+const API="https://api.bitvavo.com/v2";
+
+function fmt(n){
+ return Number(n).toLocaleString("nl-BE",{
+  minimumFractionDigits:2,
+  maximumFractionDigits:2
+ });
+}
+
+function ema(values,period){
+ const k=2/(period+1);
+ let result=values[0];
+ for(let i=1;i<values.length;i++){
+  result=values[i]*k+result*(1-k);
+ }
+ return result;
+}
+
+function rsi(values,period=14){
+ let gains=0,losses=0;
+ for(let i=values.length-period;i<values.length;i++){
+  const diff=values[i]-values[i-1];
+  if(diff>0) gains+=diff;
+  else losses-=diff;
+ }
+ const avgGain=gains/period;
+ const avgLoss=losses/period;
+ if(avgLoss===0) return 100;
+ return 100-(100/(1+avgGain/avgLoss));
+}
+
+async function getJSON(url){
+ const response=await fetch(url);
+ if(!response.ok) throw new Error("Bitvavo fout: "+response.status);
+ return response.json();
+}
+
+async function analyze(market){
+ const ticker=await getJSON(
+  API+"/ticker/price?market="+market
+ );
+
+ const candles=await getJSON(
+  API+"/"+market+"/candles?interval=4h&limit=100"
+ );
+
+ if(!ticker[0] || candles.length<55){
+  throw new Error("Onvoldoende marktgegevens");
+ }
+
+ // Bitvavo geeft nieuwste candle eerst.
+ const data=candles.slice().reverse();
+
+ const closes=data.map(c=>Number(c[4]));
+ const volumes=data.map(c=>Number(c[5]));
+
+ const price=Number(ticker[0].price);
+ const r=rsi(closes);
+ const e20=ema(closes,20);
+ const e50=ema(closes,50);
+
+ const lastVolume=volumes[volumes.length-1];
+ const avgVolume=volumes.slice(-21,-1)
+  .reduce((a,b)=>a+b,0)/20;
+
+ let signal="WAIT";
+
+ if(e20>e50 && price>e20 && r>=50 && r<68){
+  signal="BUY";
+ }
+
+ if(e20<e50 && price<e20 && r<50){
+  signal="SELL";
+ }
+
+ let explanation="Geen duidelijk handelssignaal.";
+ if(signal==="BUY"){
+  explanation="Positieve trend en RSI ondersteunt het signaal.";
+ }
+ if(signal==="SELL"){
+  explanation="Negatieve trend en RSI ondersteunt het signaal.";
+ }
+
+ return {
+  market,price,r,e20,e50,signal,
+  volume:lastVolume,
+  avgVolume,
+  explanation
+ };
+}
+
+function render(item){
+ const name=item.market==="BTC-EUR"?"Bitcoin":"Ethereum";
+
+ return `
+ <div class="card">
+  <div class="row">
+   <strong>${name}</strong>
+   <span class="signal ${item.signal}">${item.signal}</span>
+  </div>
+  <div class="price">€${fmt(item.price)}</div>
+  <div class="muted">${item.market} · 4 uur</div>
+  <div class="stats">
+   <div class="stat">
+    <div class="muted">RSI 14</div>
+    <div class="value">${fmt(item.r)}</div>
+   </div>
+   <div class="stat">
+    <div class="muted">EMA 20</div>
+    <div class="value">€${fmt(item.e20)}</div>
+   </div>
+   <div class="stat">
+    <div class="muted">EMA 50</div>
+    <div class="value">€${fmt(item.e50)}</div>
+   </div>
+   <div class="stat">
+    <div class="muted">Volume laatste candle</div>
+    <div class="value">${fmt(item.volume)}</div>
+   </div>
+  </div>
+  <p class="muted">${item.explanation}</p>
+ </div>`;
+}
+
+async function loadAll(){
+ const status=document.getElementById("status");
+ const coins=document.getElementById("coins");
+
+ status.textContent="Marktgegevens ophalen...";
+ coins.innerHTML="";
+
+ const markets=["BTC-EUR","ETH-EUR"];
+ let errors=0;
+
+ for(const market of markets){
+  try{
+   const result=await analyze(market);
+   coins.innerHTML+=render(result);
+  }catch(error){
+   errors++;
+   coins.innerHTML+=`
+    <div class="card">
+     ${market}: gegevens niet beschikbaar.
+     <div class="muted">${error.message}</div>
+    </div>`;
+  }
+ }
+
+ status.textContent=errors===0
+  ?"Verbonden · Laatste update: "+new Date().toLocaleTimeString("nl-BE")
+  :"Niet alle gegevens konden worden opgehaald.";
+
+}
+
+loadAll();
+setInterval(loadAll,60000);
+</script>
+</body>
+</html>
